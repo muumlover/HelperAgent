@@ -3,6 +3,7 @@
 # Python Dynamic Socks5 Proxy
 # Usage: python s5.py 1080
 # Background Run: nohup python s5.py 1080 &
+import logging
 import select
 import socket
 import socketserver
@@ -23,11 +24,16 @@ class ATYP:
     IPV6 = 4
 
 
-class CMD:
-    CONNECT = 1
-    BIND = 2
-    UDP_ASSOCIATE = 3
-    REG_SURVIVOR = 250
+CMD_CONNECT = 1
+CMD_BIND = 2
+CMD_UDP_ASSOCIATE = 3
+CMD_REG_SURVIVOR = 250
+
+RSP_SOCKET5_VERSION = b'\x05\x00'
+RSP_SUCCESS = b'\x05\x00\x00\x01'
+RSP_CONNECTION_REFUSED = b'\x05\x05\x00\x01'
+RSP_COMMAND_NOT_SUPPORTED = b'\x05\x07\x00\x01'
+RSP_ADDRESS_TYPE_NOT_SUPPORTED = b'\x05\x08\x00\x01'
 
 
 class REP:
@@ -70,20 +76,21 @@ class SurvivorServer(socketserver.StreamRequestHandler):
             sock.send(b'\x05\x00')
             # 2. Request
             data = self.rfile.read(4)
-            mode = data[1]
             atyp = data[3]
-            if mode == CMD.CONNECT:  # 1. Tcp connect
+            cmd = data[1]
+            if cmd == CMD_CONNECT:  # 1. Tcp connect
                 survivor_sock = self.survivor.pop()
                 survivor_sock.send(data)
                 self.handle_tcp(sock, survivor_sock)
-            elif mode == CMD.REG_SURVIVOR:
+            elif cmd == CMD_REG_SURVIVOR:
                 self.survivor.append(sock)
             else:
+                logging.error('unknown command %d', cmd)
                 # Command not supported
-                return sock.send(b'\x05\x07\x00\x01')
+                return sock.send(RSP_COMMAND_NOT_SUPPORTED)
             # # 3. Transferring
             # if reply[1] == REP.SUCCESS:  # Success
-            #     if mode == CMD.CONNECT:  # 1. Tcp connect
+            #     if mode == CMD_CONNECT:  # 1. Tcp connect
             #         self.handle_tcp(sock, remote)
         except socket.error:
             pass  # print 'error' nothing to do .
@@ -111,19 +118,19 @@ class RescuersServer(socketserver.StreamRequestHandler):
             sock = self.connection
             # 1. Version
             sock.recv(262)
-            sock.send(b'\x05\x00')
+            sock.send(RSP_SOCKET5_VERSION)
             # 2. Request
             data = self.rfile.read(4)
             mode = data[1]
             atyp = data[3]
-            if mode == CMD.CONNECT:  # 1. Tcp connect
+            if mode == CMD_CONNECT:  # 1. Tcp connect
                 if atyp == ATYP.IPV4:  # IPv4
                     addr = socket.inet_ntoa(self.rfile.read(4))
                 elif atyp == ATYP.DOMAIN:  # Domain name
                     addr = self.rfile.read(sock.recv(1)[0])
                 else:
                     # Addr type not supported
-                    return sock.send(b'\x05\x08\x00\x01')
+                    return sock.send(RSP_ADDRESS_TYPE_NOT_SUPPORTED)
                 port = struct.unpack('>H', self.rfile.read(2))
 
                 try:
@@ -132,20 +139,20 @@ class RescuersServer(socketserver.StreamRequestHandler):
                     local = remote.getsockname()
                 except socket.error:
                     # Connection refused
-                    return sock.send(b'\x05\x05\x00\x01\x00\x00\x00\x00\x00\x00')
+                    return sock.send(RSP_CONNECTION_REFUSED)
+                    # return sock.send(b'\x05\x05\x00\x01\x00\x00\x00\x00\x00\x00')
 
-                reply = b'\x05\x00\x00\x01'
-                reply += socket.inet_aton(local[0]) + struct.pack('>H', local[1])
+                reply = RSP_SUCCESS + socket.inet_aton(local[0]) + struct.pack('>H', local[1])
                 sock.send(reply)
-            elif mode == CMD.REG_SURVIVOR:
+            elif mode == CMD_REG_SURVIVOR:
                 self.survivor.append(sock)
                 return
             else:
                 # Command not supported
-                return sock.send(b'\x05\x07\x00\x01')
+                return sock.send(RSP_COMMAND_NOT_SUPPORTED)
             # 3. Transferring
             if reply[1] == REP.SUCCESS:  # Success
-                if mode == CMD.CONNECT:  # 1. Tcp connect
+                if mode == CMD_CONNECT:  # 1. Tcp connect
                     self.handle_tcp(sock, remote)
         except socket.error:
             pass  # print 'error' nothing to do .
