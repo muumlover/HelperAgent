@@ -51,13 +51,23 @@ class EchoServerProtocol(asyncio.Protocol):
         peername = transport.get_extra_info('peername')
         print('Connection from local {}'.format(peername))
         self.transport = transport
+        self.transport.write(RSP_SOCKET5_VERSION)
 
     def data_received(self, data):
+        print('Local data: ', data)
+        data = bytearray(data)
+
+        if self.remote_transport:
+            return self.remote_transport.write(data)
+        elif data[0:3] == b'\x05\x01\x00':
+            del data[0:3]
+            self.socket5_flag = True
+
         if self.socket5_flag:
-            self.socket5_flag = False
             if len(data) < 4:
-                return self.transport.close()
-            data = bytearray(data)
+                print('No socket5 bytes')
+                return self.transport.write(RSP_SOCKET5_VERSION)
+            self.socket5_flag = False
             tpm_data = data[0:4]
             del data[0:4]
             mode = tpm_data[1]
@@ -75,16 +85,13 @@ class EchoServerProtocol(asyncio.Protocol):
                 port = struct.unpack('>H', data[0:2])
                 del data[0:2]
                 return self.loop.create_task(connect_remote(self, addr, port[0]))
+            elif mode == CMD_UDP_ASSOCIATE:
+                print('No supported CMD_UDP_ASSOCIATE')
             else:
                 print('RSP_COMMAND_NOT_SUPPORTED')
                 return self.transport.write(RSP_COMMAND_NOT_SUPPORTED)
-        elif data == b'\x05\x01\x00':
-            self.socket5_flag = True
-            return self.transport.write(RSP_SOCKET5_VERSION)
-        elif self.remote_transport:
-            print('Local data: ', data)
-            return self.remote_transport.write(data)
-        print('Unknown data: ', data)
+        else:
+            print('Unknown')
 
 
 async def connect_remote(server: EchoServerProtocol, addr, port):
