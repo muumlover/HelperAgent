@@ -3,6 +3,7 @@
 # Python Dynamic Socks5 Proxy
 # Usage: python s5.py 1080
 # Background Run: nohup python s5.py 1080 &
+import asyncio
 import logging
 import select
 import socket
@@ -98,9 +99,24 @@ class SurvivorServer(socketserver.StreamRequestHandler):
             pass
 
 
-class RescuersServer(socketserver.StreamRequestHandler):
+class RescuersClient:
     survivor = []
     close = False
+
+    survivor_host = None
+    survivor_port = None
+    survivor_socket = None
+
+    def __init__(self, host, port):
+        self.survivor_host = host
+        self.survivor_port = port
+        self.rescures()
+
+    def rescures(self):
+        remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        remote.connect((self.survivor_host, self.survivor_port))
+        self.survivor_socket = remote
+        # local = remote.getsockname()
 
     def handle_tcp(self, sock, remote):
         f_d_set = [sock, remote]
@@ -122,8 +138,8 @@ class RescuersServer(socketserver.StreamRequestHandler):
             # 2. Request
             data = self.rfile.read(4)
             mode = data[1]
-            atyp = data[3]
             if mode == CMD_CONNECT:  # 1. Tcp connect
+                atyp = data[3]
                 if atyp == ATYP.IPV4:  # IPv4
                     addr = socket.inet_ntoa(self.rfile.read(4))
                 elif atyp == ATYP.DOMAIN:  # Domain name
@@ -132,7 +148,6 @@ class RescuersServer(socketserver.StreamRequestHandler):
                     # Addr type not supported
                     return sock.send(RSP_ADDRESS_TYPE_NOT_SUPPORTED)
                 port = struct.unpack('>H', self.rfile.read(2))
-
                 try:
                     remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     remote.connect((addr, port[0]))
@@ -141,7 +156,6 @@ class RescuersServer(socketserver.StreamRequestHandler):
                     # Connection refused
                     return sock.send(RSP_CONNECTION_REFUSED)
                     # return sock.send(b'\x05\x05\x00\x01\x00\x00\x00\x00\x00\x00')
-
                 reply = RSP_SUCCESS + socket.inet_aton(local[0]) + struct.pack('>H', local[1])
                 sock.send(reply)
             elif mode == CMD_REG_SURVIVOR:
@@ -202,3 +216,9 @@ if __name__ == '__main__':
         survivor(options.port)
     if options.rescuers:
         rescuers(options.target, options.port)
+
+    # 获取EventLoop:
+    loop = asyncio.get_event_loop()
+    # 执行coroutine
+    loop.run_until_complete(hello())
+    loop.close()
